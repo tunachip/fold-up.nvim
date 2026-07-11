@@ -1,6 +1,10 @@
 local M = {}
 
-local defaults = { fold_command = "Fold", unfold_command = "Unfold" }
+local defaults = {
+  fold_command = "Fold",
+  unfold_command = "Unfold",
+  mappings = { unfold = "<leader>uf", fold = "<leader>ff" },
+}
 local config = vim.deepcopy(defaults)
 
 local function trim(text)
@@ -136,19 +140,19 @@ local function transform_dots(text, base_indent, mode)
   return table.concat(lines, "\n")
 end
 
-local function transform_wrapped(text, base_indent, mode)
+local function transform_wrapped(text, base_indent, mode, requested_separator)
   local wrapped = unwrap(text)
   if not wrapped then return transform_dots(text, base_indent, mode) end
-  local separator = sequence_kind(wrapped.inside)
+  local separator = requested_separator or sequence_kind(wrapped.inside)
   if not separator then
     -- Still recurse into a call/index/object nested in an otherwise ordinary expression.
-    return wrapped.open .. transform(wrapped.inside, base_indent, mode) .. wrapped.close
+    return wrapped.open .. transform(wrapped.inside, base_indent, mode, requested_separator) .. wrapped.close
   end
 
   local items, trailing = split_sequence(wrapped.inside, separator)
   local child_indent = base_indent .. string.rep(" ", shiftwidth())
   for i, item in ipairs(items) do
-    items[i] = transform(trim(item), child_indent, mode)
+    items[i] = transform(trim(item), child_indent, mode, requested_separator)
     if mode == "fold" then items[i] = inline(items[i]) end
   end
   if mode == "fold" then
@@ -182,10 +186,10 @@ local function first_delimited_span(text)
   return start, finish
 end
 
-transform = function(text, base_indent, mode)
+transform = function(text, base_indent, mode, requested_separator)
   local wrapped = unwrap(text)
-  if wrapped then return transform_wrapped(text, base_indent, mode) end
-  if #dot_positions(text) > 0 or (mode == "fold" and text:match("\n%s*%.")) then
+  if wrapped then return transform_wrapped(text, base_indent, mode, requested_separator) end
+  if requested_separator == "." or (not requested_separator and (#dot_positions(text) > 0 or (mode == "fold" and text:match("\n%s*%.")))) then
     return transform_dots(text, base_indent, mode)
   end
 
@@ -198,8 +202,8 @@ transform = function(text, base_indent, mode)
       out[#out + 1] = transform_dots(text:sub(offset), base_indent, mode)
       break
     end
-    out[#out + 1] = transform_dots(text:sub(offset, offset + start - 2), base_indent, mode)
-    out[#out + 1] = transform_wrapped(text:sub(offset + start - 1, offset + finish - 1), base_indent, mode)
+    out[#out + 1] = transform(text:sub(offset, offset + start - 2), base_indent, mode, requested_separator)
+    out[#out + 1] = transform_wrapped(text:sub(offset + start - 1, offset + finish - 1), base_indent, mode, requested_separator)
     offset = offset + finish
   end
   return table.concat(out)
@@ -272,30 +276,46 @@ local function dot_chain_range()
   return { sr = first, sc = 1, er = last, ec = #lines[last], text = table.concat(vim.list_slice(lines, first, last), "\n"), indent = lines[first]:match("^%s*") or "" }
 end
 
-local function target()
+local function target(constraint, separator)
   local mode = vim.fn.mode(1)
   if mode:match("^[vVs\22]") then return visual_range() end
-  for _, region in ipairs(enclosing_regions()) do return region_range(region) end
-  return dot_chain_range()
+  for _, region in ipairs(enclosing_regions()) do
+    local range = region_range(region)
+    if not constraint or range.text:sub(1, 1) == constraint then return range end
+  end
+  if separator == "." then return dot_chain_range() end
+  return nil
 end
 
-local function run(mode)
+local function parse_argument(argument)
+  if argument == "(" or argument == "[" or argument == "{" then return nil, argument end
+  if argument == "," or argument == ";" or argument == "." then return argument, nil end
+  if argument == nil or argument == "" then return nil, nil end
+  return false, nil
+end
+
+local function run(mode, argument)
   if vim.bo.buftype ~= "" or not vim.bo.modifiable then
     vim.notify((mode == "fold" and "Fold" or "Unfold") .. " only works in modifiable file buffers", vim.log.levels.WARN)
     return
   end
-  local range = target()
+  local separator, constraint = parse_argument(argument)
+  if separator == false then
+    vim.notify("Expected one of: , ; . ( [ {", vim.log.levels.WARN)
+    return
+  end
+  local range = target(constraint, separator)
   if not range then
     vim.notify("Place the cursor in a delimited sequence or dot chain, or select text", vim.log.levels.WARN)
     return
   end
-  local output = transform(range.text, range.indent, mode)
+  local output = transform(range.text, range.indent, mode, separator)
   -- A cursor inside `foo.bar()` is also inside the empty call parentheses.
   -- Prefer the useful containing dot chain when that small region is unchanged.
-  if output == range.text and not vim.fn.mode(1):match("^[vVs\22]") then
+  if output == range.text and (separator == "." or separator == nil) and not vim.fn.mode(1):match("^[vVs\22]") then
     local chain = dot_chain_range()
     if chain then
-      range, output = chain, transform(chain.text, chain.indent, mode)
+      range, output = chain, transform(chain.text, chain.indent, mode, separator)
     end
   end
   if output == range.text then
@@ -305,15 +325,31 @@ local function run(mode)
   replace_range(range, vim.split(output, "\n", { plain = true }))
 end
 
-function M.fold() run("fold") end
-function M.unfold() run("unfold") end
+function M.fold(argument) run("fold", argument) end
+function M.unfold(argument) run("unfold", argument) end
+
+local function prompt(mode)
+  local argument = vim.fn.getcharstr()
+  run(mode, argument)
+end
 
 function M.setup(opts)
   config = vim.tbl_deep_extend("force", vim.deepcopy(defaults), opts or {})
   pcall(vim.api.nvim_del_user_command, config.fold_command)
   pcall(vim.api.nvim_del_user_command, config.unfold_command)
-  vim.api.nvim_create_user_command(config.fold_command, M.fold, { range = true, desc = "Fold a structural sequence" })
-  vim.api.nvim_create_user_command(config.unfold_command, M.unfold, { range = true, desc = "Unfold a structural sequence" })
+  vim.api.nvim_create_user_command(config.fold_command, function(command) M.fold(command.args) end, {
+    nargs = "?", range = true, desc = "Fold a sequence: :Fold [,;.( [{]"
+  })
+  vim.api.nvim_create_user_command(config.unfold_command, function(command) M.unfold(command.args) end, {
+    nargs = "?", range = true, desc = "Unfold a sequence: :Unfold [,;.( [{]"
+  })
+
+  if config.mappings and config.mappings.unfold then
+    vim.keymap.set({ "n", "x" }, config.mappings.unfold, function() prompt("unfold") end, { desc = "Unfold sequence" })
+  end
+  if config.mappings and config.mappings.fold then
+    vim.keymap.set({ "n", "x" }, config.mappings.fold, function() prompt("fold") end, { desc = "Fold sequence" })
+  end
 end
 
 return M
