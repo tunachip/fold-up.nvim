@@ -28,9 +28,9 @@ The default mappings wait for one character after the prefix:
 | `<leader>uf.` | unfold a fluent dot chain |
 | `<leader>uf(` | unfold the nearest enclosing `()` sequence |
 | `<leader>uf{` | unfold the nearest enclosing `{}` sequence |
-| `<leader>ff,` | fold a comma-separated sequence |
-| `<leader>ff;` | fold a semicolon-separated sequence |
-| `<leader>ff.` | fold a fluent dot chain |
+| `<leader>fu,` | fold a comma-separated sequence |
+| `<leader>fu;` | fold a semicolon-separated sequence |
+| `<leader>fu.` | fold a fluent dot chain |
 
 `(`, `[`, and `{` are *container constraints*: they select that nearest kind of enclosing delimiter and automatically choose comma or semicolon items inside it. `,`, `;`, and `.` explicitly select the separator. This makes ambiguous nested code predictable: use a separator to select what changes, or a delimiter to select where it changes.
 
@@ -53,7 +53,7 @@ require("fold-up").setup({
   unfold_command = "Unfold",
   mappings = {
     unfold = "<leader>uf",
-    fold = "<leader>ff",
+    fold = "<leader>fu",
   },
 })
 ```

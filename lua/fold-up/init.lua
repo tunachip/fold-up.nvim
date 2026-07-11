@@ -3,7 +3,7 @@ local M = {}
 local defaults = {
   fold_command = "Fold",
   unfold_command = "Unfold",
-  mappings = { unfold = "<leader>uf", fold = "<leader>ff" },
+  mappings = { unfold = "<leader>uf", fold = "<leader>fu" },
 }
 local config = vim.deepcopy(defaults)
 
