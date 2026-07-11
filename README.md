@@ -1,14 +1,30 @@
 # fold-up.nvim
 
-`fold-up.nvim` provides two structural editing commands for comma-separated collections:
+`fold-up.nvim` provides lightweight structural editing commands:
 
-- `:Fold` collapses the enclosing selection or bracketed collection onto one line
-- `:Unfold` expands the enclosing selection or bracketed collection, recursively unfolding nested collections
+- `:Fold` collapses a sequence onto one line
+- `:Unfold` expands a sequence onto one item per line
 
-The plugin is quote-aware for `'`, `"`, and backticks. It works on either:
+It recognizes the following common programming patterns:
 
-- an active visual selection
-- the nearest enclosing `()`, `[]`, or `{}` region under the cursor
+- comma-separated items in `()`, `[]`, and `{}` (including nested collections)
+- semicolon-separated statements in a delimited block
+- fluent dot chains, such as Rust method chains
+
+```rust
+let value = source.parse().trim().to_string();
+```
+
+becomes:
+
+```rust
+let value = source
+    .parse()
+    .trim()
+    .to_string();
+```
+
+Comma and semicolon delimiters, including a trailing delimiter, are preserved. The lexer ignores quoted strings and line/block comments, so punctuation within them is not treated as a separator.
 
 ## Requirements
 
@@ -21,20 +37,6 @@ The plugin is quote-aware for `'`, `"`, and backticks. It works on either:
 ```lua
 {
   "tunachip/fold-up.nvim",
-  config = function()
-    require("fold-up").setup({
-      fold_command = "Fold",
-      unfold_command = "Unfold",
-    })
-  end,
-}
-```
-
-### Local development
-
-```lua
-{
-  dir = "~/Development/fold-up",
   config = function()
     require("fold-up").setup({})
   end,
@@ -52,12 +54,6 @@ require("fold-up").setup({
 
 ## Usage
 
-Place the cursor inside a bracketed collection and run `:Fold` or `:Unfold`.
+Place the cursor in a delimited expression/block or a multi-line dot chain, then run `:Fold` or `:Unfold`. Alternatively, make a visual selection to constrain the edit to exactly that text.
 
-You can also visually select a region and run the same commands to operate only within that scope.
-
-## Notes
-
-`fold-up.nvim` is intentionally lightweight and text-based. It handles nested bracketed collections and quoted strings well, but it is not a full syntax-tree formatter.
-
-If you find a language-specific edge case, add a minimal example and iterate on the parser before broadening scope.
+This is deliberately a text-based structural editor, not a full formatter or syntax-tree parser. For unusual language syntax, select the exact sequence to make the intended scope explicit.
