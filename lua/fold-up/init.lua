@@ -41,7 +41,8 @@ local function code_chars(text, fn)
       quote, i = ch, i + 1
     elseif ch == "/" and next_ch == "*" then
       block_comment, i = true, i + 2
-    elseif (ch == "/" and next_ch == "/") or ch == "#" then
+    elseif ch == "/" and next_ch == "/" then
+      -- Do not treat # as a comment: CSS colours and selectors use it heavily.
       local newline = text:find("\n", i, true)
       i = newline and newline + 1 or #text + 1
     elseif ch == "-" and next_ch == "-" then
@@ -74,12 +75,12 @@ local function unwrap(text)
 end
 
 -- Return top-level items and whether the source ended with a separator.
-local function split_sequence(text, separator)
+local function split_sequence(text, separator, ignore_nesting)
   local items, start, stack = {}, 1, {}
   code_chars(text, function(ch, i)
     if pairs[ch] then stack[#stack + 1] = ch
     elseif closers[ch] and stack[#stack] == closers[ch] then stack[#stack] = nil
-    elseif ch == separator and #stack == 0 then
+    elseif ch == separator and (ignore_nesting or #stack == 0) then
       items[#items + 1] = text:sub(start, i - 1)
       start = i + 1
     end
@@ -118,6 +119,20 @@ local function dot_positions(text)
     end
   end)
   return positions
+end
+
+local function transform_sequence(text, base_indent, mode, separator)
+  local items, trailing = split_sequence(text, separator, true)
+  if #items < 2 then return text end
+  for i, item in ipairs(items) do items[i] = trim(item) end
+  if mode == "fold" then
+    return table.concat(items, separator .. " ") .. (trailing and separator or "")
+  end
+  local indent = base_indent
+  for i, item in ipairs(items) do
+    items[i] = indent .. item .. ((i < #items or trailing) and separator or "")
+  end
+  return table.concat(items, "\n")
 end
 
 local function transform_dots(text, base_indent, mode)
@@ -191,6 +206,9 @@ transform = function(text, base_indent, mode, requested_separator)
   if wrapped then return transform_wrapped(text, base_indent, mode, requested_separator) end
   if requested_separator == "." or (not requested_separator and (#dot_positions(text) > 0 or (mode == "fold" and text:match("\n%s*%.")))) then
     return transform_dots(text, base_indent, mode)
+  end
+  if requested_separator == "," or requested_separator == ";" then
+    return transform_sequence(text, base_indent, mode, requested_separator)
   end
 
   -- Expressions such as `call({ one: 1, two: 2 })` are not themselves
@@ -266,6 +284,13 @@ local function region_range(region)
   return { sr = region.sr, sc = region.sc, er = region.er, ec = region.ec, text = table.concat(lines, "\n"), indent = line:sub(1, region.sc - 1):match("^%s*") or "" }
 end
 
+local function line_sequence_range(separator)
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  local line = vim.api.nvim_buf_get_lines(0, row - 1, row, false)[1] or ""
+  if #select(1, split_sequence(line, separator, true)) < 2 then return nil end
+  return { sr = row, sc = 1, er = row, ec = #line, text = line, indent = line:match("^%s*") or "" }
+end
+
 local function dot_chain_range()
   local row = vim.api.nvim_win_get_cursor(0)[1]
   local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
@@ -284,6 +309,7 @@ local function target(constraint, separator)
     if not constraint or range.text:sub(1, 1) == constraint then return range end
   end
   if separator == "." then return dot_chain_range() end
+  if separator == "," or separator == ";" then return line_sequence_range(separator) end
   return nil
 end
 
